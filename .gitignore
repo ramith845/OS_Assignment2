@@ -2,3 +2,4 @@
 /install/riscv-*
 /install/qemu*
 .vscode
+mkfs
