@@ -3,3 +3,5 @@
 /install/qemu*
 .vscode
 mkfs
+github
+github.pub
