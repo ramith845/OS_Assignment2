@@ -86,6 +86,7 @@ void page_fault_handler(void)
     uint64 faulting_addr_aligned = PGROUNDDOWN(faulting_addr);
 
     /* Check if the fault address is a heap page. Use p->heap_tracker */
+    
     if (p->heap_tracker[0].addr == faulting_addr_aligned) {
         goto heap_handle;
     }
@@ -118,7 +119,8 @@ void page_fault_handler(void)
             if((sz1 = uvmalloc(pagetable, faulting_addr_aligned, faulting_addr_aligned + PGSIZE, flags2perm(ph.flags))) == 0)
                 printf("[ERROR] Allocate physical memory\n");
             sz = sz1;
-            if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+            uint offset_in_file = ph.off + (faulting_addr_aligned - ph.vaddr);
+            if(loadseg(pagetable, faulting_addr_aligned, ip, offset_in_file, PGSIZE) < 0)
                 printf("[ERROR] Loading to physical memory\n");
             
             print_load_seg(faulting_addr, ph.off, ph.memsz);

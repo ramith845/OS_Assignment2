@@ -378,7 +378,21 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if (pa0 == 0){
-      return -1;
+      // struct proc *p = myproc();
+      // if(va0 >= p->sz)
+      //   return -1;
+      // walk(pagetable, va0, 1);
+      // uint64 saved_stval = r_stval();
+      // w_stval(va0);  // Set stval to the faulting address
+      
+      // // Call page fault handler to load the page
+      // page_fault_handler();
+      
+      // // Restore original stval
+      // w_stval(saved_stval);
+      // pa0 = walkaddr(pagetable, va0);
+      // if(pa0 == 0)
+        return -1;
     }
     n = PGSIZE - (dstva - va0);
     if(n > len)
