@@ -285,8 +285,16 @@ growproc(int n)
   n = PGROUNDUP(n);
 
   sz = p->sz;
+  uint64 start = sz;  
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
+    if (p->ondemand)
+    {
+      sz += n;
+      int num_pages = n / PGSIZE;
+      track_heap(p, start, num_pages);
+      print_skip_heap_region(p->name, start, num_pages);
+    }
+    else if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
       return -1;
     }
   } else if(n < 0){

@@ -37,42 +37,111 @@ void init_psa_regions(void)
 /* Evict heap page to disk when resident pages exceed limit */
 void evict_page_to_disk(struct proc* p) {
     /* Find free block */
-    int blockno = 0;
-    /* Find victim page using FIFO. */
-    /* Print statement. */
-    print_evict_page(0, 0);
-    /* Read memory from the user to kernel memory first. */
+    int blockno = -1;
+    for (size_t i = 0; i <= PSAEND - 4; i++)
+    {
+        if (!psa_tracker[i] && !psa_tracker[i+1]
+            && !psa_tracker[i+2] && !psa_tracker[i+3])
+        {
+            blockno = (int)i;
+            for (size_t j = 0; j < 4; j++)
+            {
+                psa_tracker[i + j] = true;
+            }
+            
+            break;
+        }
+    }
     
+    /* Find victim page using FIFO. */
+    uint64 oldest = -1;
+    for (size_t i = 0, MAX = 0; i < MAXHEAP; i++)
+    {
+        if (p->heap_tracker[i].loaded) 
+        {
+            uint64 elapsed = read_current_timestamp() - p->heap_tracker[i].last_load_time;
+            if (elapsed > MAX)
+            {
+                MAX = elapsed;
+                oldest = (int)i;
+            }
+        }
+    }
+    
+    /* Print statement. */
+    print_evict_page(p->heap_tracker[oldest].addr, blockno);
+    /* Read memory from the user to kernel memory first. */
+    char *mem = kalloc(); // TODO
+    copyin(p->pagetable, mem, p->heap_tracker[oldest].addr, PGSIZE); 
+
     /* Write to the disk blocks. Below is a template as to how this works. There is
      * definitely a better way but this works for now. :p */
     struct buf* b;
-    b = bread(1, PSASTART+(blockno));
+    for (size_t i = 0; i < 4; i++)
+    {   
+        b = bread(1, PSASTART + (blockno) + i);
         // Copy page contents to b.data using memmove.
-    bwrite(b);
-    brelse(b);
-
+        memmove(b->data, mem + i * BSIZE , BSIZE);
+        bwrite(b);
+        brelse(b);
+    }
+    kfree(mem);
     /* Unmap swapped out page */
+    uvmunmap(p->pagetable, p->heap_tracker[oldest].addr, 1, true);
     /* Update the resident heap tracker. */
+    p->heap_tracker[oldest].startblock = blockno;
+    p->heap_tracker[oldest].loaded = false;
+    p->resident_heap_pages--;
 }
 
 /* Retrieve faulted page from disk. */
 void retrieve_page_from_disk(struct proc* p, uint64 uvaddr) {
     /* Find where the page is located in disk */
-
+    int block_start = 0;
+    int head_id = -1;
+    uint64 uvaddr_aligned = PGROUNDDOWN(uvaddr);
+    for (size_t i = 0; i < MAXHEAP; i++)
+    {
+        if (p->heap_tracker[i].addr == uvaddr_aligned && p->heap_tracker[i].loaded) 
+        {
+            block_start = p->heap_tracker[i].startblock;
+            head_id = (int)i;
+        }
+    }
+    
     /* Print statement. */
-    print_retrieve_page(0, 0);
+    print_retrieve_page(uvaddr, block_start);
 
     /* Create a kernel page to read memory temporarily into first. */
-    
-    /* Read the disk block into temp kernel page. */
+    char *mem = kalloc();
 
+    /* Read the disk block into temp kernel page. */
+    struct buf* b;
+    for (size_t i = 0; i < 4; i++)
+    {   
+        b = bread(1, PSASTART + (block_start) + i);
+        // Copy page contents to b.data using memmove.
+        memmove(mem + i * BSIZE, b->data , BSIZE);
+        brelse(b);
+    }
     /* Copy from temp kernel page to uvaddr (use copyout) */
+    copyout(p->pagetable, uvaddr_aligned, mem, PGSIZE);
+
+    kfree(mem);
+
+    p->heap_tracker[head_id].loaded = true;
+    p->heap_tracker[head_id].startblock = -1;
+    p->heap_tracker[head_id].last_load_time = read_current_timestamp();
+
+    for(int i = 0; i < 4; i++) {
+        psa_tracker[block_start + i] = false;
+    }
 }
 
 
 void page_fault_handler(void) 
 {
-    printf("Page Fault Handler START\n");
+    // printf("Page Fault Handler START\n");
     
     /* Current process struct */
     struct proc *p = myproc();
@@ -86,10 +155,17 @@ void page_fault_handler(void)
     uint64 faulting_addr_aligned = PGROUNDDOWN(faulting_addr);
 
     /* Check if the fault address is a heap page. Use p->heap_tracker */
-    
-    if (p->heap_tracker[0].addr == faulting_addr_aligned) {
-        goto heap_handle;
+    int heap_id = -1;
+    for (size_t i = 0; i < MAXHEAP; i++)
+    {
+        if (p->heap_tracker[i].addr == faulting_addr_aligned 
+            && faulting_addr < p->heap_tracker[i].addr + PGSIZE) 
+        {
+            heap_id = (int)i;
+            goto heap_handle;
+        }
     }
+    
     
     /* If it came here, it is a page from the program binary that we must load. */
     struct elfhdr elf;
@@ -114,9 +190,9 @@ void page_fault_handler(void)
             continue;
         
         if (faulting_addr_aligned >= ph.vaddr && faulting_addr_aligned < ph.vaddr + ph.memsz) {   
-            printf("Page found FA: %p, PH_VADDR: %p, PH_SIZE: %p\n", faulting_addr_aligned, ph.vaddr, ph.memsz);
+            // printf("Page found FA: %p, PH_VADDR: %p, PH_SIZE: %p\n", faulting_addr_aligned, ph.vaddr, ph.memsz);
             uint64 sz1;
-            if((sz1 = uvmalloc(pagetable, faulting_addr_aligned, faulting_addr_aligned + PGSIZE, flags2perm(ph.flags))) == 0)
+            if((sz1 = uvmalloc(pagetable, faulting_addr_aligned, faulting_addr_aligned + PGSIZE, flags2perm(ph.flags) | PTE_U | PTE_R | PTE_V)) == 0)
                 printf("[ERROR] Allocate physical memory\n");
             sz = sz1;
             uint offset_in_file = ph.off + (faulting_addr_aligned - ph.vaddr);
@@ -135,15 +211,20 @@ void page_fault_handler(void)
     goto out;
 
 heap_handle:
+    load_from_disk = (!p->heap_tracker[heap_id].loaded && p->heap_tracker[heap_id].startblock != -1);
     /* 2.4: Check if resident pages are more than heap pages. If yes, evict. */
     if (p->resident_heap_pages == MAXRESHEAP) {
         evict_page_to_disk(p);
     }
 
     /* 2.3: Map a heap page into the process' address space. (Hint: check growproc) */
-
+    if((sz = uvmalloc(p->pagetable, faulting_addr_aligned, faulting_addr_aligned + PGSIZE, PTE_W)) == 0)
+        return -1;
+    
     /* 2.4: Update the last load time for the loaded heap page in p->heap_tracker. */
-
+    p->heap_tracker[heap_id].loaded = 1;
+    p->heap_tracker[heap_id].last_load_time = read_current_timestamp();
+    
     /* 2.4: Heap page was swapped to disk previously. We must load it from disk. */
     if (load_from_disk) {
         retrieve_page_from_disk(p, faulting_addr);
@@ -153,8 +234,8 @@ heap_handle:
     p->resident_heap_pages++;
 
 out:
-    printf("--------------------------------------\n");
-    printf("Page Fault Handled\n\n");
+    // printf("--------------------------------------\n");
+    // printf("Page Fault Handled\n\n");
     /* Flush stale page table entries. This is important to always do. */
     sfence_vma();
     return;
