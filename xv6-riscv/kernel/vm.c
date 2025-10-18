@@ -18,6 +18,10 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+extern struct spinlock cow_lock;
+
+int is_shmem(int group, uint64 pa);
+int get_cow_group_count(int group);
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -176,7 +180,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
   pte_t *pte;
-
+  struct proc *p = myproc();
+ 
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
@@ -184,7 +189,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
-      continue;
+      continue; // skipping invalid pages for cow-fork
       /* CSE 536: removed for on-demand allocation. */
       // panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
@@ -193,6 +198,20 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       uint64 pa = PTE2PA(*pte);
       /* CSE 536: (2.6.1) Freeing Process Memory */
       // Make sure that the shared pages, belonging to a CoW group, are not freed twice
+      if (p->cow_enabled && p->cow_group)
+      {
+        acquire(&cow_lock);
+        if (is_shmem(p->cow_group, pa) && get_cow_group_count(p->cow_group) > 1)
+        {
+          // printf("COW_GROUP shared memory dont free skip");
+          *pte = 0;
+          release(&cow_lock);
+          continue;
+        }
+        release(&cow_lock);
+      }
+      
+      // printf("[DEBUG] uvmunmap: unmapping va=%p, npages=%d, do_free=%d\n", a, npages, do_free);
       kfree((void*)pa);
     }
     *pte = 0;
@@ -299,6 +318,8 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
+  // printf("[DEBUG] uvmfree: freeing user pages, pagetable=%p, sz=%p\n", pagetable, sz);
+
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
@@ -319,10 +340,12 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walk(old, i, 0)) == 0)
+    // printf("%x", i);
+    pte = walk(old, i, 0);
+    if(pte == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)

@@ -40,6 +40,13 @@ exec(char *path, char **argv)
     print_ondemand_proc(path);
     p->ondemand = true;
   }
+
+  if(strncmp(path, "test5-odheap-big", 12) == 0 || 
+   strncmp(path, "test6-pswap", 11) == 0 || 
+   strncmp(path, "test7-pswap", 11) == 0) 
+  {
+    init_psa_regions();
+  }
   // printf("%s, %d\n", path, p->ondemand);
   
   begin_op();

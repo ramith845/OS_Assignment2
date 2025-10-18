@@ -151,8 +151,8 @@ void page_fault_handler(void)
 
     /* Find faulting address. */
     uint64 faulting_addr = r_stval();
-    print_page_fault(p->name, faulting_addr);
     uint64 faulting_addr_aligned = PGROUNDDOWN(faulting_addr);
+    print_page_fault(p->name, faulting_addr_aligned);
 
     /* Check if the fault address is a heap page. Use p->heap_tracker */
     int heap_id = -1;
@@ -168,6 +168,11 @@ void page_fault_handler(void)
     
     
     /* If it came here, it is a page from the program binary that we must load. */
+    if (p->cow_enabled && p->cow_group && r_scause() == 15)
+    {
+        copy_on_write();
+    }
+    
     struct elfhdr elf;
     struct proghdr ph;
     struct inode *ip;
@@ -199,7 +204,7 @@ void page_fault_handler(void)
             if(loadseg(pagetable, faulting_addr_aligned, ip, offset_in_file, PGSIZE) < 0)
                 printf("[ERROR] Loading to physical memory\n");
             
-            print_load_seg(faulting_addr, ph.off, ph.memsz);
+            print_load_seg(faulting_addr_aligned, ph.off, ph.memsz);
             break;
         }
     }
@@ -207,10 +212,20 @@ void page_fault_handler(void)
     iunlockput(ip);
     end_op();
 
+    
     /* Go to out, since the remainder of this code is for the heap. */
     goto out;
 
 heap_handle:
+
+    pte_t *pte = walk(p->pagetable, faulting_addr_aligned, 0);
+    if (pte && (*pte & PTE_V) && !(*pte & PTE_W) && r_scause() == 15) {
+        // printf("WRITE Fault make it writable");
+        *pte |= PTE_W;
+        sfence_vma();
+        goto out;
+    }
+
     load_from_disk = (!p->heap_tracker[heap_id].loaded && p->heap_tracker[heap_id].startblock != -1);
     /* 2.4: Check if resident pages are more than heap pages. If yes, evict. */
     if (p->resident_heap_pages == MAXRESHEAP) {
