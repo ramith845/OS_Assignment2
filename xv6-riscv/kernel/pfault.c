@@ -55,11 +55,14 @@ void evict_page_to_disk(struct proc* p) {
     
     /* Find victim page using FIFO. */
     uint64 oldest = -1;
+    uint64 currTime = read_current_timestamp();
     for (size_t i = 0, MAX = 0; i < MAXHEAP; i++)
     {
-        if (p->heap_tracker[i].loaded) 
+        if (p->heap_tracker[i].loaded && 
+            p->heap_tracker[i].startblock == -1 &&
+            p->heap_tracker[i].addr != 0xFFFFFFFFFFFFFFFF) 
         {
-            uint64 elapsed = read_current_timestamp() - p->heap_tracker[i].last_load_time;
+            uint64 elapsed = currTime - p->heap_tracker[i].last_load_time;
             if (elapsed > MAX)
             {
                 MAX = elapsed;
@@ -102,10 +105,13 @@ void retrieve_page_from_disk(struct proc* p, uint64 uvaddr) {
     uint64 uvaddr_aligned = PGROUNDDOWN(uvaddr);
     for (size_t i = 0; i < MAXHEAP; i++)
     {
-        if (p->heap_tracker[i].addr == uvaddr_aligned && p->heap_tracker[i].loaded) 
+        if (p->heap_tracker[i].addr == uvaddr_aligned && 
+            !p->heap_tracker[i].loaded &&
+            p->heap_tracker[i].startblock != -1) 
         {
             block_start = p->heap_tracker[i].startblock;
             head_id = (int)i;
+            break;
         }
     }
     
@@ -154,6 +160,13 @@ void page_fault_handler(void)
     uint64 faulting_addr_aligned = PGROUNDDOWN(faulting_addr);
     print_page_fault(p->name, faulting_addr_aligned);
 
+    
+    if (p->cow_enabled && p->cow_group && r_scause() == 15)
+    {
+        copy_on_write();
+        goto out;
+    }
+
     /* Check if the fault address is a heap page. Use p->heap_tracker */
     int heap_id = -1;
     for (size_t i = 0; i < MAXHEAP; i++)
@@ -166,13 +179,8 @@ void page_fault_handler(void)
         }
     }
     
-    
     /* If it came here, it is a page from the program binary that we must load. */
-    if (p->cow_enabled && p->cow_group && r_scause() == 15)
-    {
-        copy_on_write();
-    }
-    
+
     struct elfhdr elf;
     struct proghdr ph;
     struct inode *ip;
@@ -236,14 +244,14 @@ heap_handle:
     if((sz = uvmalloc(p->pagetable, faulting_addr_aligned, faulting_addr_aligned + PGSIZE, PTE_W)) == 0)
         return -1;
     
-    /* 2.4: Update the last load time for the loaded heap page in p->heap_tracker. */
-    p->heap_tracker[heap_id].loaded = 1;
-    p->heap_tracker[heap_id].last_load_time = read_current_timestamp();
-    
     /* 2.4: Heap page was swapped to disk previously. We must load it from disk. */
     if (load_from_disk) {
         retrieve_page_from_disk(p, faulting_addr);
     }
+    
+    /* 2.4: Update the last load time for the loaded heap page in p->heap_tracker. */
+    p->heap_tracker[heap_id].loaded = 1;
+    p->heap_tracker[heap_id].last_load_time = read_current_timestamp();
 
     /* Track that another heap page has been brought into memory. */
     p->resident_heap_pages++;
