@@ -144,6 +144,7 @@ UPROGS=\
 	$U/_test9-cow2\
 	$U/_test10-cow3\
 	$U/_zombie\
+	$U/_wsa_test\
 
 # swap disk
 swap.img:

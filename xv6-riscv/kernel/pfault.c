@@ -53,31 +53,79 @@ void evict_page_to_disk(struct proc* p) {
         }
     }
     
-    uint64 oldest = -1;
-    /* WSA algo implementation */
-
-    /* Find victim page using FIFO. */
+    int victim = -1;
     uint64 currTime = read_current_timestamp();
-    for (size_t i = 0, MAX = 0; i < MAXHEAP; i++)
-    {
-        if (p->heap_tracker[i].loaded && 
-            p->heap_tracker[i].startblock == -1 &&
-            p->heap_tracker[i].addr != 0xFFFFFFFFFFFFFFFF) 
-        {
-            uint64 elapsed = currTime - p->heap_tracker[i].last_load_time;
-            if (elapsed > MAX)
-            {
-                MAX = elapsed;
-                oldest = (int)i;
+
+    /* Working Set Algorithm (WSA): prefer pages that have not been accessed
+     * recently. We check the PTE_A bit for each loaded heap page. If the A bit
+     * is set, update last_load_time and clear A. Otherwise compute age and if
+     * age >= WS_TAU_TICKS consider it for eviction. If no candidate found,
+     * fall back to oldest (FIFO-style) based on last_load_time.
+     */
+    uint64 oldest_age = 0;
+    int fifo_candidate = -1;
+    uint64 fifo_max = 0;
+
+    for (size_t i = 0; i < MAXHEAP; i++) {
+        if (!(p->heap_tracker[i].loaded) || p->heap_tracker[i].startblock != -1)
+            continue;
+        uint64 va = p->heap_tracker[i].addr;
+        pte_t *pte = walk(p->pagetable, va, 0);
+        if (pte == 0)
+            continue;
+
+        /* If accessed, refresh last_load_time and clear accessed bit. */
+        if (*pte & PTE_A) {
+            p->heap_tracker[i].last_load_time = currTime;
+            *pte &= ~PTE_A;
+            continue;
+        }
+
+        uint64 age = currTime - p->heap_tracker[i].last_load_time;
+        if (age >= WS_TAU_TICKS && (uint64)age > oldest_age) {
+            oldest_age = age;
+            victim = (int)i;
+        }
+
+        /* Track FIFO candidate (oldest overall) as fallback. */
+        if (p->heap_tracker[i].last_load_time > 0) {
+            uint64 age_fifo = currTime - p->heap_tracker[i].last_load_time;
+            if (age_fifo > fifo_max) {
+                fifo_max = age_fifo;
+                fifo_candidate = (int)i;
+            }
+        }
+    }
+
+    if (victim == -1) {
+        /* No WSA candidate; use FIFO fallback */
+        if (fifo_candidate != -1)
+            victim = fifo_candidate;
+    }
+
+    if (victim == -1) {
+        /* As a last resort, scan and pick first loaded page */
+        for (size_t i = 0; i < MAXHEAP; i++) {
+            if (p->heap_tracker[i].loaded && p->heap_tracker[i].startblock == -1) {
+                victim = (int)i;
+                break;
             }
         }
     }
     
     /* Print statement. */
-    print_evict_page(p->heap_tracker[oldest].addr, blockno);
+    if (victim == -1) {
+        // nothing to evict
+        for (size_t j = 0; j < 4; j++) {
+            psa_tracker[blockno + j] = false;
+        }
+        return;
+    }
+
+    print_evict_page(p->heap_tracker[victim].addr, blockno);
     /* Read memory from the user to kernel memory first. */
     char *mem = kalloc(); // TODO
-    copyin(p->pagetable, mem, p->heap_tracker[oldest].addr, PGSIZE); 
+    copyin(p->pagetable, mem, p->heap_tracker[victim].addr, PGSIZE); 
 
     /* Write to the disk blocks. Below is a template as to how this works. There is
      * definitely a better way but this works for now. :p */
@@ -92,10 +140,10 @@ void evict_page_to_disk(struct proc* p) {
     }
     kfree(mem);
     /* Unmap swapped out page */
-    uvmunmap(p->pagetable, p->heap_tracker[oldest].addr, 1, true);
+    uvmunmap(p->pagetable, p->heap_tracker[victim].addr, 1, true);
     /* Update the resident heap tracker. */
-    p->heap_tracker[oldest].startblock = blockno;
-    p->heap_tracker[oldest].loaded = false;
+    p->heap_tracker[victim].startblock = blockno;
+    p->heap_tracker[victim].loaded = false;
     p->resident_heap_pages--;
 }
 
