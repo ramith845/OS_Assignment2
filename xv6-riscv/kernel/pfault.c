@@ -53,8 +53,10 @@ void evict_page_to_disk(struct proc* p) {
         }
     }
     
-    /* Find victim page using FIFO. */
     uint64 oldest = -1;
+    /* WSA algo implementation */
+
+    /* Find victim page using FIFO. */
     uint64 currTime = read_current_timestamp();
     for (size_t i = 0, MAX = 0; i < MAXHEAP; i++)
     {
