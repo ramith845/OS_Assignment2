@@ -34,25 +34,8 @@ void init_psa_regions(void)
         psa_tracker[i] = false;
 }
 
-/* Evict heap page to disk when resident pages exceed limit */
-void evict_page_to_disk(struct proc* p) {
-    /* Find free block */
-    int blockno = -1;
-    for (size_t i = 0; i <= PSAEND - 4; i++)
-    {
-        if (!psa_tracker[i] && !psa_tracker[i+1]
-            && !psa_tracker[i+2] && !psa_tracker[i+3])
-        {
-            blockno = (int)i;
-            for (size_t j = 0; j < 4; j++)
-            {
-                psa_tracker[i + j] = true;
-            }
-            
-            break;
-        }
-    }
-    
+uint64 find_fifo_victim_page(struct proc* p)
+{
     /* Find victim page using FIFO. */
     uint64 oldest = -1;
     uint64 currTime = read_current_timestamp();
@@ -70,12 +53,82 @@ void evict_page_to_disk(struct proc* p) {
             }
         }
     }
+    return oldest;
+}
+
+uint64 find_wsa_victim_page(struct proc* p)
+{
+    uint64 victim = -1;
+    uint64 victim_ticks = -1;
+    uint64 current_time = read_current_timestamp();
+    bool pte_changed= false;
+    for (size_t i = 0; i < MAXHEAP; i++)
+    {
+        struct heap_tracker_t* heap = &p->heap_tracker[i];
+        if (heap->loaded && heap->startblock == -1)
+        {
+            uint64 va = heap->addr;
+            pte_t* pte = walk(p->pagetable, va, false);
+            if (!(pte && (*pte & PTE_V)))
+                continue;
+            
+            if (pte && (*pte & PTE_V) && (*pte & PTE_A))
+            {
+                heap->last_load_time = current_time;
+                *pte &= ~PTE_A;
+                pte_changed = true;
+                continue;
+            }
+            
+            uint64 ticks_since_load = current_time - heap->last_load_time;
+            if (ticks_since_load > WS_TAU_TICKS && ticks_since_load > victim_ticks)
+            {
+                victim = i;
+                victim_ticks = ticks_since_load;
+            }
+            
+        }
+    }
+    if (pte_changed)
+    {
+        sfence_vma();
+    }
     
-    /* Print statement. */
-    print_evict_page(p->heap_tracker[oldest].addr, blockno);
+    return victim;
+}
+
+/* Evict heap page to disk when resident pages exceed limit */
+void evict_page_to_disk(struct proc* p) {
+    /* Find free block */
+    int blockno = -1;
+    for (size_t i = 0; i <= PSAEND - 4; i++)
+    {
+        if (!psa_tracker[i] && !psa_tracker[i+1]
+            && !psa_tracker[i+2] && !psa_tracker[i+3])
+        {
+            blockno = (int)i;
+            break;
+        }
+    }
+    
+    int victim = -1;
+    // victim = find_fifo_victim_page(p);
+    victim = find_wsa_victim_page(p);
+    
+    if (victim == -1) {
+        for (size_t j = 0; j < 4; j++) {
+            psa_tracker[blockno + j] = false;
+        }
+        return;
+    }
+
+    print_evict_page(p->heap_tracker[victim].addr, blockno);
     /* Read memory from the user to kernel memory first. */
-    char *mem = kalloc(); // TODO
-    copyin(p->pagetable, mem, p->heap_tracker[oldest].addr, PGSIZE); 
+    char *mem;
+    if ((mem== kalloc()) == 0)
+        panic("ERROR allocating k-memory in evic pages");
+    
+    copyin(p->pagetable, mem, p->heap_tracker[victim].addr, PGSIZE); 
 
     /* Write to the disk blocks. Below is a template as to how this works. There is
      * definitely a better way but this works for now. :p */
@@ -90,11 +143,16 @@ void evict_page_to_disk(struct proc* p) {
     }
     kfree(mem);
     /* Unmap swapped out page */
-    uvmunmap(p->pagetable, p->heap_tracker[oldest].addr, 1, true);
+    uvmunmap(p->pagetable, p->heap_tracker[victim].addr, 1, true);
     /* Update the resident heap tracker. */
-    p->heap_tracker[oldest].startblock = blockno;
-    p->heap_tracker[oldest].loaded = false;
+    p->heap_tracker[victim].startblock = blockno;
+    p->heap_tracker[victim].loaded = false;
     p->resident_heap_pages--;
+    
+    for (size_t j = 0; j < 4; j++)
+    {
+        psa_tracker[blockno + j] = true;
+    }
 }
 
 /* Retrieve faulted page from disk. */
