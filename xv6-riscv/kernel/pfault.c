@@ -59,42 +59,50 @@ uint64 find_fifo_victim_page(struct proc* p)
 uint64 find_wsa_victim_page(struct proc* p)
 {
     uint64 victim = -1;
-    uint64 victim_ticks = -1;
+    uint64 victim_ticks = 0, max_age = 0;
     uint64 current_time = read_current_timestamp();
     bool pte_changed= false;
+    uint64 fifo_victim = -1;
+
     for (size_t i = 0; i < MAXHEAP; i++)
     {
         struct heap_tracker_t* heap = &p->heap_tracker[i];
-        if (heap->loaded && heap->startblock == -1)
+        if (heap->loaded && heap->startblock == -1 && 
+            heap->addr != 0xFFFFFFFFFFFFFFFF)
         {
             uint64 va = heap->addr;
             pte_t* pte = walk(p->pagetable, va, false);
             if (!(pte && (*pte & PTE_V)))
                 continue;
             
+            uint64 ticks_since_load = current_time - heap->last_load_time;
+            if (fifo_victim == -1 || ticks_since_load > max_age) {
+                fifo_victim = i;
+                max_age = ticks_since_load;
+            }
+
             if (pte && (*pte & PTE_V) && (*pte & PTE_A))
             {
                 heap->last_load_time = current_time;
                 *pte &= ~PTE_A;
                 pte_changed = true;
-                continue;
             }
-            
-            uint64 ticks_since_load = current_time - heap->last_load_time;
-            if (ticks_since_load > WS_TAU_TICKS && ticks_since_load > victim_ticks)
+
+            if (!(*pte & PTE_V) && 
+                ticks_since_load >= WS_TAU_TICKS && 
+                ticks_since_load > victim_ticks)
             {
                 victim = i;
                 victim_ticks = ticks_since_load;
             }
             
         }
+
     }
     if (pte_changed)
-    {
         sfence_vma();
-    }
     
-    return victim;
+    return victim == -1? fifo_victim : victim;
 }
 
 /* Evict heap page to disk when resident pages exceed limit */
@@ -112,20 +120,26 @@ void evict_page_to_disk(struct proc* p) {
     }
     
     int victim = -1;
-    // victim = find_fifo_victim_page(p);
-    victim = find_wsa_victim_page(p);
+
+    if (strncmp(p->name, "wsa_test", 8) == 0)
+    {
+        victim = find_wsa_victim_page(p);
+        // printf("WSA RUNNING - victim id: %d", victim);
+    }
+    else
+    {
+        victim = find_fifo_victim_page(p);
+        // printf("FIFO RUNNING");
+    }
     
     if (victim == -1) {
-        for (size_t j = 0; j < 4; j++) {
-            psa_tracker[blockno + j] = false;
-        }
         return;
     }
 
     print_evict_page(p->heap_tracker[victim].addr, blockno);
     /* Read memory from the user to kernel memory first. */
     char *mem;
-    if ((mem== kalloc()) == 0)
+    if ((mem = kalloc()) == 0)
         panic("ERROR allocating k-memory in evic pages");
     
     copyin(p->pagetable, mem, p->heap_tracker[victim].addr, PGSIZE); 

@@ -6,23 +6,31 @@
 int
 main(int argc, char *argv[])
 {
-    int total = 200; // allocate more than MAXRESHEAP
-    char *base = sbrk(PGSIZE * total);
-    if (base == (char*)-1) {
-        printf("sbrk failed\n");
-        exit(1);
+    int npages = 200; 
+    void* heappages = sbrk(4096*npages);
+    if (!heappages) {
+        printf("[X] Heap memory allocation FAILED.\n");
+        return -1;
     }
 
-    // Touch pages 0..49 (hot set), 50..199 cold
+    int* a;
+    // Hot Set: 0-100 , Cold Set: 100-199
     for (int iter = 0; iter < 1000; iter++) {
-        // touch hot set
-        for (int i = 0; i < 50; i++) {
-            base[i*PGSIZE] = (char)i;
+        // Hot Pages
+        for (int i = 0; i < 100; i++) {
+            a = (int*)(&heappages[i*PGSIZE]);
+            for (int j = 0; j < PGSIZE/sizeof(int); j++) {
+                *a = j;
+                a++;
+            }
         }
-        // occasionally touch some cold pages
+        // uint64 t = read_current_timestamp();
+        // Cold Pages
         if (iter % 50 == 0) {
-            for (int i = 50; i < total; i += 30) {
-                base[i*PGSIZE] = 1;
+            for (int i = 100; i < npages; i += 30) {
+                a = (int*)(&heappages[i*PGSIZE]);
+                *a = 1;
+                // printf("%d\n", i);
             }
         }
     }
