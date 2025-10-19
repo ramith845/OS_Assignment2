@@ -14,15 +14,9 @@ struct proc *initproc;
 
 int nextpid = 1;
 struct spinlock pid_lock;
-extern struct spinlock cow_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
-int uvmcopy_cow(pagetable_t old, pagetable_t new, uint64 sz);
-void cow_group_init(int groupno);
-void incr_cow_group_count(int group);
-void decr_cow_group_count(int group);
-void cow_group_cleanup(int group);
 
 extern char trampoline[]; // trampoline.S
 
@@ -164,9 +158,7 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  // printf("[DEBUG] freeproc: PID %d freeing pagetable, sz=%p\n", p->pid, p->sz);
 
-  
   if(p->pagetable)
   proc_freepagetable(p->pagetable, p->sz);
   
@@ -439,7 +431,6 @@ void
 exit(int status)
 {
   struct proc *p = myproc();
-  // printf("[DEBUG] Process %d (%s) exiting, sz=%p\n", p->pid, p->name, p->sz);
   if(p == initproc)
     panic("init exiting");
 

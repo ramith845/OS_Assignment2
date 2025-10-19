@@ -18,10 +18,6 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
-extern struct spinlock cow_lock;
-
-int is_shmem(int group, uint64 pa);
-int get_cow_group_count(int group);
 
 // Make a direct-map page table for the kernel.
 pagetable_t

@@ -22,4 +22,4 @@
 #define MAXHEAP                 1000     // maximum pages for heap allocation
 #define MAXRESHEAP              100      // maximum in-memory pages for heap allocation
 
-#define WS_TAU_TICKS            200
+#define WS_TAU_TICKS            5

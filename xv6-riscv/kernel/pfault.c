@@ -120,7 +120,8 @@ void evict_page_to_disk(struct proc* p) {
     }
     
     int victim = -1;
-
+    
+    // Same test with FIFO takes almost 14s but WSA takes <10s
     if (strncmp(p->name, "wsa_test", 8) == 0)
     {
         victim = find_wsa_victim_page(p);
@@ -275,7 +276,6 @@ void page_fault_handler(void)
             continue;
         
         if (faulting_addr_aligned >= ph.vaddr && faulting_addr_aligned < ph.vaddr + ph.memsz) {   
-            // printf("Page found FA: %p, PH_VADDR: %p, PH_SIZE: %p\n", faulting_addr_aligned, ph.vaddr, ph.memsz);
             uint64 sz1;
             if((sz1 = uvmalloc(pagetable, faulting_addr_aligned, faulting_addr_aligned + PGSIZE, flags2perm(ph.flags) | PTE_U | PTE_R | PTE_V)) == 0)
                 printf("[ERROR] Allocate physical memory\n");

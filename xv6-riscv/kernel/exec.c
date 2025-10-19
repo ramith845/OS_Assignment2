@@ -47,7 +47,6 @@ exec(char *path, char **argv)
   {
     init_psa_regions();
   }
-  // printf("%s, %d\n", path, p->ondemand);
   
   begin_op();
   

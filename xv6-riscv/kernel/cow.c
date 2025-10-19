@@ -22,8 +22,6 @@ struct cow_group
 
 struct cow_group cow_group[NPROC];
 
-void print_copy_on_write(struct proc *p, uint64 vaddr);
-
 struct cow_group *get_cow_group(int group)
 {
     if (group == -1)
@@ -136,7 +134,7 @@ int uvmcopy_cow(pagetable_t old, pagetable_t new, uint64 sz)
     uint64 pa, i;
     uint flags;
 
-    // map vitual memory from new(child) process to old(parent) process's shared physical memory
+    // map vitual memory from new(child) process to process's shared physical memory
     for (i = 0; i < sz; i += PGSIZE)
     {
         if ((pte = walk(old, i, 0)) == 0)

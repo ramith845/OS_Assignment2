@@ -191,6 +191,16 @@ extern uint64   non_fault_addr;
 void            page_fault_handler(void);
 void            proc_pswap_diskblocks_init(void);
 
+// CSE 536: cow.c
+extern struct spinlock cow_lock;
+int is_shmem(int group, uint64 pa);
+int get_cow_group_count(int group);
+int uvmcopy_cow(pagetable_t old, pagetable_t new, uint64 sz);
+void cow_group_init(int groupno);
+void incr_cow_group_count(int group);
+void decr_cow_group_count(int group);
+void cow_group_cleanup(int group);
+
 // CSE 536: debug.h
 void print_static_proc(char* name);
 void print_ondemand_proc(char* name);
@@ -200,6 +210,7 @@ void print_load_seg(uint64 vaddr, uint64 seg, int size);
 void print_skip_heap_region(char* name, uint64 vaddr, int npages);
 void print_evict_page(uint64 vaddr, int startblock);
 void print_retrieve_page(uint64 vaddr, int startblock);
+void print_copy_on_write(struct proc *p, uint64 vaddr);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
